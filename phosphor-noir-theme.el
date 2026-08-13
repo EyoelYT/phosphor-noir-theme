@@ -7,49 +7,111 @@
 ;; - violet comments
 ;; - warm coral constants
 ;; - subdued olive line numbers
+;;
+;; Customization:
+;;
+;; `phosphor-noir-brightness'
+;;     Controls how far colors move from the original palette.
+;;
+;; `phosphor-noir-maximum-saturation'
+;;     Controls the maximum saturation target for chromatic colors.
+;;
+;; `phosphor-noir-maximum-lightness'
+;;     Controls the maximum HSV value target for chromatic colors.
+;;
+;; Hue is always preserved so that colors retain their identities.
 
 ;;; Code:
 
 (require 'color)
 
+(defgroup phosphor-noir nil
+  "Customization options for the Phosphor Noir theme."
+  :group 'faces)
+
 (defvar phosphor-noir--reloading nil
   "Non-nil while reloading the Phosphor Noir theme.")
 
-(defun phosphor-noir--set-brightness (symbol value)
-  "Set SYMBOL to brightness VALUE and refresh the theme.
+(defun phosphor-noir--set-unit-option (symbol value)
+  "Set SYMBOL to VALUE and refresh the theme.
 
-VALUE must be between 0.0 and 1.0."
+VALUE must be a number between 0.0 and 1.0."
   (unless (and (numberp value)
                (<= 0.0 value)
                (<= value 1.0))
-    (user-error
-     "Phosphor Noir brightness must be between 0.0 and 1.0"))
+    (user-error "%s must be between 0.0 and 1.0" symbol))
 
   (set-default symbol (float value))
 
-  ;; Rebuild the theme immediately when changed through `setopt' or
-  ;; the Customize interface.
+  ;; Rebuild the theme immediately when an option is changed with
+  ;; `setopt' or through the Customize interface.
   (when (and (memq 'phosphor-noir custom-enabled-themes)
              (not phosphor-noir--reloading))
     (let ((phosphor-noir--reloading t))
       (disable-theme 'phosphor-noir)
       (load-theme 'phosphor-noir t))))
 
-(defcustom phosphor-noir-brightness 0.25
-  "Brightness and vibrancy of the Phosphor Noir color palette.
+(defcustom phosphor-noir-brightness 0.8
+  "Overall intensity of the Phosphor Noir palette.
 
 The accepted range is 0.0 through 1.0.
 
   0.00  Slightly duller than the original palette.
-  0.25  The original palette.
-  0.50  Moderately brighter.
+  0.25  The exact original palette.
+  0.50  Halfway toward the configured maximums.
   0.75  Bright and vivid.
-  1.00  Maximum brightness and vibrancy.
+  1.00  The configured maximum saturation and lightness.
 
-The adjustment preserves each color's hue."
+This option controls interpolation strength.  The final targets
+are controlled by `phosphor-noir-maximum-saturation' and
+`phosphor-noir-maximum-lightness'."
   :type 'number
-  :group 'faces
-  :set #'phosphor-noir--set-brightness)
+  :group 'phosphor-noir
+  :set #'phosphor-noir--set-unit-option)
+
+(defcustom phosphor-noir-maximum-saturation 0.72
+  "Maximum saturation target for chromatic colors.
+
+The accepted range is 0.0 through 1.0.
+
+This target is reached when `phosphor-noir-brightness' is 1.0.
+The original color is not reduced in saturation if it is already
+more saturated than this value.
+
+Reasonable values include:
+
+  0.55  Muted.
+  0.65  Colorful but restrained.
+  0.72  Vivid without being excessively neon.
+  0.85  Highly saturated.
+  1.00  Maximum saturation."
+  :type 'number
+  :group 'phosphor-noir
+  :set #'phosphor-noir--set-unit-option)
+
+(defcustom phosphor-noir-maximum-lightness 0.95
+  "Maximum brightness target for chromatic colors.
+
+The accepted range is 0.0 through 1.0.
+
+Internally this is an HSV value rather than HSL lightness.  HSV
+value allows colors to become brighter while avoiding the pastel
+or white appearance caused by high HSL lightness.
+
+This target is reached when `phosphor-noir-brightness' is 1.0.
+The original color is not darkened if it already exceeds this
+value.
+
+Reasonable values include:
+
+  0.75  Dull.
+  0.85  Restrained.
+  0.92  Bright but comfortable.
+  0.96  Very bright.
+  1.00  Maximum RGB intensity."
+  :type 'number
+  :group 'phosphor-noir
+  :set #'phosphor-noir--set-unit-option)
 
 (defun phosphor-noir--clamp (value)
   "Clamp VALUE to the range 0.0 through 1.0."
@@ -120,27 +182,29 @@ the form (RED GREEN BLUE)."
             rgb)))
 
 (defun phosphor-noir--adjust-color (hex &optional neutral-max-value)
-  "Adjust HEX according to `phosphor-noir-brightness'.
+  "Adjust HEX according to the Phosphor Noir options.
 
-The original color is reproduced exactly at brightness 0.25.
+The original color is reproduced exactly when
+`phosphor-noir-brightness' is 0.25.
 
 Below 0.25, the color becomes subtly duller.
 
-Above 0.25, chromatic colors become more saturated and increase
-their HSV value.  This makes them more vivid without washing them
-out toward white.
+Above 0.25, chromatic colors move toward
+`phosphor-noir-maximum-saturation' and
+`phosphor-noir-maximum-lightness'.  Hue is preserved.
 
 When NEUTRAL-MAX-VALUE is a number, treat HEX as a neutral color:
 reduce its saturation toward zero and move its HSV value toward
-NEUTRAL-MAX-VALUE.  A value of 1.0 therefore produces pure white."
-  (let* ((amount (phosphor-noir--clamp
-                  (float phosphor-noir-brightness)))
+NEUTRAL-MAX-VALUE.  A value of 1.0 produces pure white."
+  (let* ((amount
+          (phosphor-noir--clamp
+           (float phosphor-noir-brightness)))
          (baseline 0.25)
          (rgb (color-name-to-rgb hex))
          adjusted-rgb)
 
     (if (<= amount baseline)
-        ;; Dull side: make only a small HSL adjustment.
+        ;; Dull side: only a subtle reduction from the original.
         (pcase-let* ((`(,red ,green ,blue) rgb)
                      (`(,hue ,saturation ,lightness)
                       (color-rgb-to-hsl red green blue))
@@ -157,18 +221,21 @@ NEUTRAL-MAX-VALUE.  A value of 1.0 therefore produces pure white."
                  (phosphor-noir--clamp new-saturation)
                  (phosphor-noir--clamp new-lightness))))
 
-      ;; Bright side: use HSV so colors become vivid rather than pale.
+      ;; Bright side: use HSV so chromatic colors become vivid rather
+      ;; than pale.
       (pcase-let* ((`(,red ,green ,blue) rgb)
                    (`(,hue ,saturation ,value)
-                    (phosphor-noir--rgb-to-hsv red green blue))
+                    (phosphor-noir--rgb-to-hsv
+                     red green blue))
                    (progress
                     (/ (- amount baseline)
                        (- 1.0 baseline))))
 
         (if neutral-max-value
-            ;; Neutral colors move toward gray or white.
+            ;; Neutral colors move toward a configured gray or white.
             (let ((new-saturation
-                   (* saturation (- 1.0 progress)))
+                   (* saturation
+                      (- 1.0 progress)))
                   (new-value
                    (+ value
                       (* (- neutral-max-value value)
@@ -179,16 +246,22 @@ NEUTRAL-MAX-VALUE.  A value of 1.0 therefore produces pure white."
                      (phosphor-noir--clamp new-saturation)
                      (phosphor-noir--clamp new-value))))
 
-          ;; Chromatic colors move toward maximum saturation and
-          ;; maximum HSV value while retaining their original hue.
-          (let ((new-saturation
-                 (+ saturation
-                    (* (- 1.0 saturation)
-                       progress)))
-                (new-value
-                 (+ value
-                    (* (- 1.0 value)
-                       progress))))
+          ;; Do not reduce an original color when the configured
+          ;; maximum is below the color's starting component.
+          (let* ((target-saturation
+                  (max saturation
+                       phosphor-noir-maximum-saturation))
+                 (target-value
+                  (max value
+                       phosphor-noir-maximum-lightness))
+                 (new-saturation
+                  (+ saturation
+                     (* (- target-saturation saturation)
+                        progress)))
+                 (new-value
+                  (+ value
+                     (* (- target-value value)
+                        progress))))
             (setq adjusted-rgb
                   (phosphor-noir--hsv-to-rgb
                    hue
@@ -205,15 +278,17 @@ NEUTRAL-MAX-VALUE.  A value of 1.0 therefore produces pure white."
       (bg-alt      "#101010")
       (bg-active   "#181818")
 
-      ;; Main text reaches exactly #ffffff.
+      ;; Main foreground reaches exactly #ffffff when the brightness
+      ;; option is 1.0.
       (fg          (phosphor-noir--adjust-color "#d8d6d0" 1.0))
       (variable    (phosphor-noir--adjust-color "#d8d6d0" 1.0))
 
-      ;; Muted foreground becomes a brighter neutral gray, but does
-      ;; not become as bright as the main foreground.
+      ;; Muted foreground approaches a neutral gray with an HSV value
+      ;; of 0.78 rather than becoming pure white.
       (fg-muted    (phosphor-noir--adjust-color "#96958d" 0.78))
 
-      ;; Chromatic colors become saturated and vivid.
+      ;; Chromatic colors use the configurable maximum saturation and
+      ;; lightness targets.
       (line-number (phosphor-noir--adjust-color "#747342"))
       (comment     (phosphor-noir--adjust-color "#8864ad"))
       (comment-doc (phosphor-noir--adjust-color "#9a78bc"))
